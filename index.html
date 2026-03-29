@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+
 <title>Pro Metronome+</title>
 
 <style>
@@ -10,34 +11,66 @@
   --bg:#070A12;
   --panel:rgba(255,255,255,0.06);
   --text:#E6EAF2;
-  --muted:#8B93A7;
   --accent:#5EEAD4;
   --accent2:#38BDF8;
-  --orange:#F59E0B;
 }
 
 body.light{
   --bg:#f3f6fb;
   --panel:rgba(0,0,0,0.05);
   --text:#0f172a;
-  --muted:#334155;
   --accent:#0ea5e9;
   --accent2:#6366f1;
-  --orange:#f97316;
 }
 
-body{
+/* GLOBAL */
+html,body{
   margin:0;
-  font-family: system-ui;
+  padding:0;
   background: radial-gradient(circle at top, #0B1220, var(--bg));
   color:var(--text);
-  height:100vh;
+  font-family: system-ui;
+  overflow:hidden; /* 🚫 no scrolling anywhere */
+  height:100%;
+}
+
+/* MOBILE FULLSCREEN FIX */
+body{
+  height:100dvh;
   display:flex;
   justify-content:center;
   align-items:center;
+  touch-action:none; /* 🚫 prevents scroll gestures on mobile */
 }
 
-.app{width:100%;max-width:460px;padding:20px;}
+/* APP WRAPPER */
+.app{
+  width:100%;
+  max-width:460px;
+  padding:20px;
+  box-sizing:border-box;
+}
+
+/* MOBILE ADJUSTMENTS */
+@media (max-width:600px){
+  .app{
+    padding:12px;
+  }
+
+  .card{
+    padding:14px;
+    border-radius:18px;
+  }
+
+  .bpm{
+    font-size:42px;
+  }
+
+  canvas{
+    width:180px !important;
+    height:180px !important;
+  }
+}
 
 .card{
   background:var(--panel);
@@ -57,7 +90,10 @@ body{
   -webkit-text-fill-color:transparent;
 }
 
-canvas{display:block;margin:10px auto;}
+canvas{
+  display:block;
+  margin:10px auto;
+}
 
 .ts{
   display:flex;
@@ -130,6 +166,7 @@ button{
 </head>
 
 <body>
+
 <div class="app">
 <div class="card">
 
@@ -167,6 +204,19 @@ button{
 </div>
 
 <script>
+/* ---------------- DEVICE DETECTION ---------------- */
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+/* ---------------- VIBRATION ---------------- */
+function vibrate(type){
+  if(!isMobile || !navigator.vibrate) return;
+
+  if(type === "accent") navigator.vibrate(80);
+  else if(type === "beat") navigator.vibrate(40);
+  else navigator.vibrate(15);
+}
+
+/* ---------------- STATE ---------------- */
 let bpm=120;
 let beatsPerBar=4;
 let subdivision=1;
@@ -179,41 +229,60 @@ let lastHitTime=0;
 const PRESET_KEY = "metronome_presets";
 const MAX_PRESETS = 10;
 
+/* ---------------- CANVAS ---------------- */
 const canvas=document.getElementById("dial");
 const ctx=canvas.getContext("2d");
+
+/* retina scaling */
+function resizeCanvas(){
+  const size = isMobile ? 180 : 240;
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.style.width = size+"px";
+  canvas.style.height = size+"px";
+  canvas.width = size*dpr;
+  canvas.height = size*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+resizeCanvas();
 
 const display=document.getElementById("bpmDisplay");
 const slider=document.getElementById("slider");
 
-// ---------------- PRESETS ----------------
+/* ---------------- AUDIO ---------------- */
+let ctxAudio;
+
+function ensureAudio(){
+  if(!ctxAudio){
+    ctxAudio = new (window.AudioContext||window.webkitAudioContext)();
+  }
+  if(ctxAudio.state === "suspended"){
+    ctxAudio.resume();
+  }
+}
+
+/* ---------------- PRESETS ---------------- */
 function getPresets(){
   return JSON.parse(localStorage.getItem(PRESET_KEY) || "[]");
 }
-
 function setPresets(p){
   localStorage.setItem(PRESET_KEY, JSON.stringify(p));
 }
-
 function refreshPresetUI(){
   const select = document.getElementById("presetSelect");
   select.innerHTML = "";
-
   const presets = getPresets();
 
   for(let i=0;i<MAX_PRESETS;i++){
     const opt = document.createElement("option");
     opt.value = i;
-
     const p = presets[i];
-    opt.textContent = p
-      ? `Preset ${i+1} (${p.bpm} BPM)`
-      : `Preset ${i+1} (empty)`;
-
+    opt.textContent = p ? `Preset ${i+1} (${p.bpm} BPM)` : `Preset ${i+1} (empty)`;
     select.appendChild(opt);
   }
 }
 
-// ---------------- DRAW ----------------
+/* ---------------- DRAW ---------------- */
 function draw(){
 ctx.clearRect(0,0,240,240);
 let c=120,r=90;
@@ -246,39 +315,9 @@ ctx.lineTo(c+Math.cos(needleAngle)*r,c+Math.sin(needleAngle)*r);
 ctx.strokeStyle="white";
 ctx.lineWidth=2;
 ctx.stroke();
-
-for(let i=0;i<beatsPerBar;i++){
-if(accentPattern[i]){
-
-let a = (i / beatsPerBar) * Math.PI * 2 - Math.PI / 2;
-
-let nowTime = performance.now();
-let age = nowTime - (accentFlash[i] || 0);
-let isFlashing = age < 120;
-let pop = isFlashing ? (1 - age / 120) : 0;
-
-let isOne = i === 0;
-
-let radius = r + 12 + (isOne ? 6 : 0) + pop * 6;
-
-let x = c + Math.cos(a) * radius;
-let y = c + Math.sin(a) * radius;
-
-ctx.beginPath();
-ctx.arc(x,y,isOne ? 7 : 5 + pop*2,0,Math.PI*2);
-
-ctx.fillStyle = isOne ? "#FFB020" : "#F59E0B";
-
-ctx.shadowColor = ctx.fillStyle;
-ctx.shadowBlur = 10 + pop*20;
-
-ctx.fill();
-ctx.shadowBlur = 0;
-}
-}
 }
 
-// ---------------- BPM ----------------
+/* ---------------- BPM ---------------- */
 function setBpm(v){
 bpm=Math.max(20,Math.min(400,Math.round(v)));
 display.textContent=bpm;
@@ -286,7 +325,7 @@ slider.value=bpm;
 }
 slider.oninput=()=>setBpm(slider.value);
 
-// ---------------- TIME ----------------
+/* ---------------- TIME ---------------- */
 function updateTimeSignature(){
 let top=parseInt(document.getElementById("tsTop").value)||4;
 beatsPerBar=top;
@@ -296,13 +335,10 @@ accentPattern=new Array(beatsPerBar).fill(false);
 accentPattern[0]=true;
 
 accentFlash=new Array(beatsPerBar).fill(0);
-
 renderAccents();
 }
-document.getElementById("tsTop").oninput=updateTimeSignature;
-document.getElementById("tsBottom").oninput=updateTimeSignature;
 
-// ---------------- ACCENTS ----------------
+/* ---------------- ACCENTS ---------------- */
 function renderAccents(){
 const div=document.getElementById("accents");
 div.innerHTML="";
@@ -313,7 +349,7 @@ b.textContent=i+1;
 
 if(accentPattern[i]) b.classList.add("active");
 
-b.onclick=()=>{
+b.onclick=()=> {
 accentPattern[i]=!accentPattern[i];
 b.classList.toggle("active");
 };
@@ -322,16 +358,21 @@ div.appendChild(b);
 }
 }
 
-// ---------------- AUDIO ----------------
-let ctxAudio=new (window.AudioContext||window.webkitAudioContext)();
-
+/* ---------------- CLICK ---------------- */
 function click(){
+ensureAudio();
+
 let beatIndex=Math.floor(step/subdivision)%beatsPerBar;
 let isMain=step%subdivision===0;
 let accent=isMain&&accentPattern[beatIndex];
 
 if(accent){
 accentFlash[beatIndex]=performance.now();
+vibrate("accent");
+} else if(isMain){
+vibrate("beat");
+} else {
+vibrate("sub");
 }
 
 let o=ctxAudio.createOscillator();
@@ -350,7 +391,7 @@ lastHitTime = performance.now();
 step++;
 }
 
-// ---------------- LOOP ----------------
+/* ---------------- LOOP ---------------- */
 let interval;
 function loop(){
 if(!playing)return;
@@ -358,9 +399,10 @@ click();
 interval=setTimeout(loop,60000/(bpm*subdivision));
 }
 
-// ---------------- START ----------------
+/* ---------------- START/STOP ---------------- */
 function start(){
 playing=true;
+ensureAudio();
 loop();
 document.getElementById("start").textContent="Pause";
 }
@@ -374,95 +416,19 @@ document.getElementById("start").textContent="Play";
 
 document.getElementById("start").onclick=()=>playing?stop():start();
 
-// ---------------- SUBDIV ----------------
+/* ---------------- EVENTS ---------------- */
+document.getElementById("tsTop").oninput=updateTimeSignature;
+
 document.getElementById("subdiv").onchange=(e)=>{
 subdivision=parseInt(e.target.value);
 step=0;
 };
 
-// ---------------- THEME ----------------
 document.getElementById("theme").onclick=()=>{
 document.body.classList.toggle("light");
 };
 
-// ---------------- SAVE ----------------
-document.getElementById("save").onclick = () => {
-const index = parseInt(document.getElementById("presetSelect").value);
-const presets = getPresets();
-
-presets[index] = {
-bpm,
-beatsPerBar,
-subdivision,
-tsBottom: parseInt(document.getElementById("tsBottom").value) || 4,
-accentPattern,
-theme: document.body.className
-};
-
-setPresets(presets);
-refreshPresetUI();
-alert("Saved preset " + (index+1));
-};
-
-// ---------------- LOAD ----------------
-document.getElementById("load").onclick = () => {
-const index = parseInt(document.getElementById("presetSelect").value);
-const presets = getPresets();
-const p = presets[index];
-
-if(!p){
-alert("Empty preset");
-return;
-}
-
-bpm = p.bpm;
-beatsPerBar = p.beatsPerBar;
-subdivision = p.subdivision;
-accentPattern = p.accentPattern;
-
-document.body.className = p.theme || "";
-
-document.getElementById("tsTop").value = beatsPerBar;
-document.getElementById("tsBottom").value = p.tsBottom || 4;
-
-setBpm(bpm);
-renderAccents();
-document.getElementById("subdiv").value = subdivision;
-};
-
-// ---------------- CLEAR ----------------
-document.getElementById("clear").onclick = () => {
-const index = parseInt(document.getElementById("presetSelect").value);
-const presets = getPresets();
-
-presets[index] = {
-bpm: 100,
-beatsPerBar: 4,
-subdivision: 1,
-tsBottom: 4,
-accentPattern: [true,false,false,false],
-theme: document.body.className
-};
-
-setPresets(presets);
-refreshPresetUI();
-
-alert("Preset " + (index+1) + " cleared");
-
-bpm = 100;
-beatsPerBar = 4;
-subdivision = 1;
-
-setBpm(bpm);
-document.getElementById("tsTop").value = 4;
-document.getElementById("tsBottom").value = 4;
-document.getElementById("subdiv").value = "1";
-
-accentPattern = [true,false,false,false];
-renderAccents();
-};
-
-// ---------------- INIT ----------------
+/* ---------------- INIT ---------------- */
 function init(){
 accentPattern=new Array(beatsPerBar).fill(false);
 accentPattern[0]=true;
@@ -480,7 +446,7 @@ draw();
 requestAnimationFrame(animate);
 }
 animate();
-
 </script>
+
 </body>
 </html>
